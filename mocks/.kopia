@@ -1,0 +1,18 @@
+{
+  "storage": {
+    "type": "s3",
+    "config": {
+      "bucket": "bucket-name",
+      "prefix": "prefix/",
+      "endpoint": "endpoint.digitaloceanspaces.com",
+      "accessKeyID": "someaccesskey",
+      "secretAccessKey": "somesecret",
+      "sessionToken": ""
+    }
+  },
+  "hostname": "host-pc",
+  "username": "user",
+  "description": "prefix",
+  "enableActions": false,
+  "formatBlobCacheDuration": 900000000000
+}

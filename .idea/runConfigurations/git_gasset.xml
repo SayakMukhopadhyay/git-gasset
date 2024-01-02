@@ -1,0 +1,13 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="git-gasset" type="GoApplicationRunConfiguration" factoryName="Go Application">
+    <module name="git-gasset" />
+    <working_directory value="$PROJECT_DIR$" />
+    <go_parameters value="-o output/git-gasset.exe" />
+    <kind value="PACKAGE" />
+    <package value="git-gasset" />
+    <directory value="$PROJECT_DIR$" />
+    <filePath value="$PROJECT_DIR$" />
+    <output_directory value="$PROJECT_DIR$/output" />
+    <method v="2" />
+  </configuration>
+</component>
