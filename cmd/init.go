@@ -19,7 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/joho/godotenv"
+	"git-gasset/util"
 	"github.com/kopia/kopia/repo"
 	"github.com/kopia/kopia/repo/blob"
 	"github.com/kopia/kopia/repo/blob/s3"
@@ -41,76 +41,99 @@ it to connect and if not, creates the repository.`,
 	RunE: InitRun,
 }
 
+func init() {
+	rootCmd.AddCommand(initCmd)
+
+	// Here you will define your flags and configuration settings.
+
+	// Cobra supports Persistent Flags which will work for this command
+	// and all subcommands, e.g.:
+	// initCmd.PersistentFlags().String("foo", "", "A help for foo")
+
+	// Cobra supports local flags which will only run when this command
+	// is called directly, e.g.:
+	initCmd.Flags().BoolP("create", "c", false, "Creates the repository if not exists")
+}
+
+type initOptions struct {
+	workingDirectory string
+	config           *util.Config
+	kopiaConfig      *repo.LocalConfig
+	password         string
+}
+
 func InitRun(cmd *cobra.Command, args []string) error {
 	log.Println("init called")
-	workingDirectory, err := getWorkingDirectory()
-	if err != nil {
+
+	initOptions := initOptions{}
+
+	if err := initOptions.initWorkingDirectory(); err != nil {
 		return err
 	}
-	config, password, err := loadKopiaConfig(workingDirectory)
-	if err != nil {
+
+	if err := initOptions.loadKopiaConfig(); err != nil {
 		return err
 	}
+
 	doCreate, err := cmd.Flags().GetBool("create")
 	if err != nil {
 		return err
 	}
-	err = connect(config, password, doCreate)
+
+	err = initOptions.connect(doCreate)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func getWorkingDirectory() (string, error) {
+func (op *initOptions) initWorkingDirectory() error {
 	// Get the current working directory
 	workingDirectory, err := os.Getwd()
 	if err != nil {
-		log.Fatal(err)
-		return "", err
+		return err
 	}
-	return getGitWorkingDirectory(workingDirectory)
+	path, err := util.GetGitWorkingDirectory(workingDirectory)
+	if err != nil {
+		return err
+	}
+	op.workingDirectory = path
+	return nil
 }
 
-func getGitWorkingDirectory(path string) (string, error) {
-	if info, err := os.Stat(filepath.Join(path, ".git")); os.IsNotExist(err) || !info.IsDir() {
-		parent := filepath.Dir(path)
-		if parent == path {
-			return "", errors.New("not a git repository")
-		}
-		return getGitWorkingDirectory(parent)
+func (op *initOptions) loadKopiaConfig() error {
+	config, err := util.GetConfig(op.workingDirectory)
+	if err != nil {
+		return err
 	}
-	return path, nil
-}
+	op.config = config
 
-func loadKopiaConfig(path string) (*repo.LocalConfig, string, error) {
-	config, err := repo.LoadConfigFromFile(filepath.Join(path, ".kopia"))
+	configTempPath, err := util.GetTempKopiaConfigPath(config)
 	if err != nil {
-		return nil, "", err
+		return err
 	}
-	accessKey, secretKey, password, err := loadKopiaSecretsFromEnv(path)
+	kopiaConfig, err := repo.LoadConfigFromFile(configTempPath)
 	if err != nil {
-		return nil, "", err
+		return err
 	}
-	if typedConfig, ok := config.Storage.Config.(*s3.Options); ok {
+	op.kopiaConfig = kopiaConfig
+
+	accessKey, secretKey, password, err := util.LoadKopiaSecretsFromEnv(op.workingDirectory)
+	if err != nil {
+		return err
+	}
+	if typedConfig, ok := kopiaConfig.Storage.Config.(*s3.Options); ok {
 		typedConfig.AccessKeyID = accessKey
 		typedConfig.SecretAccessKey = secretKey
 	}
-	return config, password, nil
+	op.password = password
+	return nil
 }
 
-func loadKopiaSecretsFromEnv(path string) (string, string, string, error) {
-	err := godotenv.Load(filepath.Join(path, ".env"))
-	if err != nil {
-		return "", "", "", err
-	}
-	return os.Getenv("KOPIA_ACCESS_ID"), os.Getenv("KOPIA_ACCESS_SECRET"), os.Getenv("KOPIA_PASSWORD"), nil
-}
-
-func connect(config *repo.LocalConfig, password string, create bool) error {
+func (op *initOptions) connect(create bool) error {
 	ctx := context.Background()
 
-	storage, err := s3.New(ctx, config.Storage.Config.(*s3.Options), false)
+	storage, err := s3.New(ctx, op.kopiaConfig.Storage.Config.(*s3.Options), false)
 	if err != nil {
 		return err
 	}
@@ -121,37 +144,44 @@ func connect(config *repo.LocalConfig, password string, create bool) error {
 	}
 
 	if create {
-		err := createRepo(ctx, storage, password)
+		err := op.createRepo(ctx, storage)
 		if err != nil {
 			return err
 		}
 	}
 
-	err = repo.Connect(ctx, filepath.Join(userDir, "git-gasset", "kopia.config"), storage, password, &repo.ConnectOptions{
-		ClientOptions:  config.ClientOptions,
+	configPath := filepath.Join(userDir, "git-gasset", "kopia-"+op.config.GassetId+".config")
+
+	err = repo.Connect(ctx, configPath, storage, op.password, &repo.ConnectOptions{
+		ClientOptions:  op.kopiaConfig.ClientOptions,
 		CachingOptions: content.CachingOptions{},
 	})
 	if err != nil {
 		return err
 	}
+
+	if create {
+
+	}
 	return nil
 }
 
-func createRepo(ctx context.Context, storage blob.Storage, password string) error {
-	err := ensureEmpty(ctx, storage)
-	if err != nil {
+func (op *initOptions) createRepo(ctx context.Context, storage blob.Storage) error {
+	if err := op.ensureEmpty(ctx, storage); err != nil {
 		return err
 	}
 
-	err = repo.Initialize(ctx, storage, nil, password)
-	if err != nil {
+	if err := repo.Initialize(ctx, storage, nil, op.password); err != nil {
 		return err
 	}
-	return nil
+
+	gassetId := util.GenerateRandomString(8)
+	op.config.GassetId = gassetId
+	return util.UpdateGassetId(op.workingDirectory, gassetId)
 }
 
 // mostly from github.com/kopia/kopia/cli.commandRepositoryCreate.ensureEmpty
-func ensureEmpty(ctx context.Context, storage blob.Storage) error {
+func (op *initOptions) ensureEmpty(ctx context.Context, storage blob.Storage) error {
 	hasDataError := errors.New("has data")
 
 	err := storage.ListBlobs(ctx, "", func(cb blob.Metadata) error {
@@ -169,16 +199,6 @@ func ensureEmpty(ctx context.Context, storage blob.Storage) error {
 	return fmt.Errorf("error listing blobs: %w", err)
 }
 
-func init() {
-	rootCmd.AddCommand(initCmd)
+func (op *initOptions) createPolicy() {
 
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// initCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	initCmd.Flags().BoolP("create", "c", false, "Creates the repository if not exists")
 }
