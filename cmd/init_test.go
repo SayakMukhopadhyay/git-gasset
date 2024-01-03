@@ -97,7 +97,7 @@ func Test_loadKopiaConfig(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := loadKopiaConfig(tt.args.path)
+			got, _, err := loadKopiaConfig(tt.args.path)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("loadKopiaConfig() error = %v, wantErr %v", err, tt.wantErr)
 				return

@@ -16,10 +16,14 @@ limitations under the License.
 package cmd
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"github.com/joho/godotenv"
 	"github.com/kopia/kopia/repo"
+	"github.com/kopia/kopia/repo/blob"
 	"github.com/kopia/kopia/repo/blob/s3"
+	"github.com/kopia/kopia/repo/content"
 	"github.com/spf13/cobra"
 	"log"
 	"os"
@@ -43,12 +47,18 @@ func InitRun(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	config, err := loadKopiaConfig(workingDirectory)
-	log.Println(config)
+	config, password, err := loadKopiaConfig(workingDirectory)
 	if err != nil {
 		return err
 	}
-
+	doCreate, err := cmd.Flags().GetBool("create")
+	if err != nil {
+		return err
+	}
+	err = connect(config, password, doCreate)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -73,23 +83,90 @@ func getGitWorkingDirectory(path string) (string, error) {
 	return path, nil
 }
 
-func loadKopiaConfig(path string) (*repo.LocalConfig, error) {
+func loadKopiaConfig(path string) (*repo.LocalConfig, string, error) {
 	config, err := repo.LoadConfigFromFile(filepath.Join(path, ".kopia"))
-	accessKey, secretKey, password := loadKopiaSecretsFromEnv(path)
-	log.Println(accessKey, secretKey, password)
+	if err != nil {
+		return nil, "", err
+	}
+	accessKey, secretKey, password, err := loadKopiaSecretsFromEnv(path)
+	if err != nil {
+		return nil, "", err
+	}
 	if typedConfig, ok := config.Storage.Config.(*s3.Options); ok {
 		typedConfig.AccessKeyID = accessKey
 		typedConfig.SecretAccessKey = secretKey
 	}
-	if err != nil {
-		return nil, err
-	}
-	return config, nil
+	return config, password, nil
 }
 
-func loadKopiaSecretsFromEnv(path string) (string, string, string) {
-	godotenv.Load(filepath.Join(path, ".env"))
-	return os.Getenv("KOPIA_ACCESS_ID"), os.Getenv("KOPIA_ACCESS_SECRET"), os.Getenv("KOPIA_PASSWORD")
+func loadKopiaSecretsFromEnv(path string) (string, string, string, error) {
+	err := godotenv.Load(filepath.Join(path, ".env"))
+	if err != nil {
+		return "", "", "", err
+	}
+	return os.Getenv("KOPIA_ACCESS_ID"), os.Getenv("KOPIA_ACCESS_SECRET"), os.Getenv("KOPIA_PASSWORD"), nil
+}
+
+func connect(config *repo.LocalConfig, password string, create bool) error {
+	ctx := context.Background()
+
+	storage, err := s3.New(ctx, config.Storage.Config.(*s3.Options), false)
+	if err != nil {
+		return err
+	}
+
+	userDir, err := os.UserConfigDir()
+	if err != nil {
+		return err
+	}
+
+	if create {
+		err := createRepo(ctx, storage, password)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = repo.Connect(ctx, filepath.Join(userDir, "git-gasset", "kopia.config"), storage, password, &repo.ConnectOptions{
+		ClientOptions:  config.ClientOptions,
+		CachingOptions: content.CachingOptions{},
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func createRepo(ctx context.Context, storage blob.Storage, password string) error {
+	err := ensureEmpty(ctx, storage)
+	if err != nil {
+		return err
+	}
+
+	err = repo.Initialize(ctx, storage, nil, password)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// mostly from github.com/kopia/kopia/cli.commandRepositoryCreate.ensureEmpty
+func ensureEmpty(ctx context.Context, storage blob.Storage) error {
+	hasDataError := errors.New("has data")
+
+	err := storage.ListBlobs(ctx, "", func(cb blob.Metadata) error {
+		return hasDataError
+	})
+
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, hasDataError) {
+		return errors.New("found existing data in storage location")
+	}
+
+	return fmt.Errorf("error listing blobs: %w", err)
 }
 
 func init() {
@@ -103,5 +180,5 @@ func init() {
 
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
-	// initCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	initCmd.Flags().BoolP("create", "c", false, "Creates the repository if not exists")
 }
