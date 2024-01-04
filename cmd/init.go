@@ -108,11 +108,11 @@ func (op *initOptions) loadKopiaConfig() error {
 	}
 	op.config = config
 
-	configTempPath, err := util.GetTempKopiaConfigPath(config)
-	if err != nil {
+	tempPath := filepath.Join(os.TempDir(), "kopia.config")
+	if err = util.WriteTempKopiaConfig(tempPath, config); err != nil {
 		return err
 	}
-	kopiaConfig, err := repo.LoadConfigFromFile(configTempPath)
+	kopiaConfig, err := repo.LoadConfigFromFile(tempPath)
 	if err != nil {
 		return err
 	}

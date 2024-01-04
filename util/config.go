@@ -37,7 +37,7 @@ func UpdateGassetId(path string, gassetId string) error {
 	}
 
 	config.GassetId = gassetId
-	return UpdateConfig(path, config)
+	return UpdateConfig(filepath.Join(path, ".gasset"), config)
 }
 
 func UpdateConfig(path string, config *Config) error {
@@ -49,20 +49,13 @@ func UpdateConfig(path string, config *Config) error {
 	return os.WriteFile(path, configBytes, 644)
 }
 
-func GetTempKopiaConfigPath(config *Config) (string, error) {
+func WriteTempKopiaConfig(path string, config *Config) error {
 	kopiaConfigBytes, err := json.MarshalIndent(config.Kopia, "", "  ")
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	tempPath := filepath.Join(os.TempDir(), "kopia.config")
-
-	err = os.WriteFile(tempPath, kopiaConfigBytes, 0644)
-	if err != nil {
-		return "", err
-	}
-
-	return tempPath, nil
+	return os.WriteFile(path, kopiaConfigBytes, 0644)
 }
 
 func LoadKopiaSecretsFromEnv(path string) (string, string, string, error) {
@@ -70,6 +63,7 @@ func LoadKopiaSecretsFromEnv(path string) (string, string, string, error) {
 	if err != nil {
 		return "", "", "", err
 	}
+
 	return os.Getenv("KOPIA_ACCESS_ID"), os.Getenv("KOPIA_ACCESS_SECRET"), os.Getenv("KOPIA_PASSWORD"), nil
 }
 
