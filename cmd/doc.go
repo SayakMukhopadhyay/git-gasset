@@ -14,14 +14,5 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package util
-
-func GenerateRandomString(n int, getRandIntn func(n int) int) string {
-	letters := []rune("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-
-	bytes := make([]rune, n)
-	for i := range bytes {
-		bytes[i] = letters[getRandIntn(len(letters))]
-	}
-	return string(bytes)
-}
+// Package cmd defines all the cobra commands
+package cmd

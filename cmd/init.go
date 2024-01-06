@@ -13,6 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
 package cmd
 
 import (
@@ -26,6 +27,7 @@ import (
 	"github.com/kopia/kopia/repo/content"
 	"github.com/spf13/cobra"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 )
@@ -175,7 +177,7 @@ func (op *initOptions) createRepo(ctx context.Context, storage blob.Storage) err
 		return err
 	}
 
-	gassetId := util.GenerateRandomString(8)
+	gassetId := util.GenerateRandomString(8, getRandIntn)
 	op.config.GassetId = gassetId
 	return util.UpdateGassetId(op.workingDirectory, gassetId)
 }
@@ -201,4 +203,8 @@ func (op *initOptions) ensureEmpty(ctx context.Context, storage blob.Storage) er
 
 func (op *initOptions) createPolicy() {
 
+}
+
+func getRandIntn(n int) int {
+	return rand.Intn(n)
 }
