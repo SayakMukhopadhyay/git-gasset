@@ -202,6 +202,12 @@ func (suite *InitSuite) Test_initOptions_connect() {
 			args:    args{create: false},
 			wantErr: assert.NoError,
 		},
+		{
+			name:    "Create S3 bucket",
+			fields:  *suite.initOptions,
+			args:    args{create: true},
+			wantErr: assert.NoError,
+		},
 	}
 	for _, tt := range tests {
 		suite.Run(tt.name, func() {
