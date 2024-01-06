@@ -62,12 +62,29 @@ type initOptions struct {
 	config           *util.Config
 	kopiaConfig      *repo.LocalConfig
 	password         string
+	gassetIdLength   int
+	osGetwd          func() (string, error)
+	osTempDir        func() string
+	osUserConfigDir  func() (string, error)
+	randIntn         func(n int) int
+	s3New            func(ctx context.Context, opt *s3.Options, createIfNotExist bool) (blob.Storage, error)
+	repoConnect      func(ctx context.Context, configFile string, st blob.Storage, password string, options *repo.ConnectOptions) error
+	repoInitialize   func(ctx context.Context, st blob.Storage, opt *repo.NewRepositoryOptions, password string) error
 }
 
-func InitRun(cmd *cobra.Command, args []string) error {
+func InitRun(cmd *cobra.Command, _ []string) error {
 	log.Println("init called")
 
-	initOptions := initOptions{}
+	initOptions := initOptions{
+		gassetIdLength:  8,
+		osGetwd:         os.Getwd,
+		osTempDir:       os.TempDir,
+		osUserConfigDir: os.UserConfigDir,
+		randIntn:        rand.Intn,
+		s3New:           s3.New,
+		repoConnect:     repo.Connect,
+		repoInitialize:  repo.Initialize,
+	}
 
 	if err := initOptions.initWorkingDirectory(); err != nil {
 		return err
@@ -91,7 +108,7 @@ func InitRun(cmd *cobra.Command, args []string) error {
 
 func (op *initOptions) initWorkingDirectory() error {
 	// Get the current working directory
-	workingDirectory, err := os.Getwd()
+	workingDirectory, err := op.osGetwd()
 	if err != nil {
 		return err
 	}
@@ -110,7 +127,7 @@ func (op *initOptions) loadKopiaConfig() error {
 	}
 	op.config = config
 
-	tempPath := filepath.Join(os.TempDir(), "kopia.config")
+	tempPath := filepath.Join(op.osTempDir(), "kopia.config")
 	if err = util.WriteTempKopiaConfig(tempPath, config); err != nil {
 		return err
 	}
@@ -119,6 +136,7 @@ func (op *initOptions) loadKopiaConfig() error {
 		return err
 	}
 	op.kopiaConfig = kopiaConfig
+	op.config.Kopia = kopiaConfig
 
 	accessKey, secretKey, password, err := util.LoadKopiaSecretsFromEnv(op.workingDirectory)
 	if err != nil {
@@ -135,12 +153,12 @@ func (op *initOptions) loadKopiaConfig() error {
 func (op *initOptions) connect(create bool) error {
 	ctx := context.Background()
 
-	storage, err := s3.New(ctx, op.kopiaConfig.Storage.Config.(*s3.Options), false)
+	storage, err := op.s3New(ctx, op.kopiaConfig.Storage.Config.(*s3.Options), false)
 	if err != nil {
 		return err
 	}
 
-	userDir, err := os.UserConfigDir()
+	userDir, err := op.osUserConfigDir()
 	if err != nil {
 		return err
 	}
@@ -154,7 +172,7 @@ func (op *initOptions) connect(create bool) error {
 
 	configPath := filepath.Join(userDir, "git-gasset", "kopia-"+op.config.GassetId+".config")
 
-	err = repo.Connect(ctx, configPath, storage, op.password, &repo.ConnectOptions{
+	err = op.repoConnect(ctx, configPath, storage, op.password, &repo.ConnectOptions{
 		ClientOptions:  op.kopiaConfig.ClientOptions,
 		CachingOptions: content.CachingOptions{},
 	})
@@ -173,11 +191,11 @@ func (op *initOptions) createRepo(ctx context.Context, storage blob.Storage) err
 		return err
 	}
 
-	if err := repo.Initialize(ctx, storage, nil, op.password); err != nil {
+	if err := op.repoInitialize(ctx, storage, nil, op.password); err != nil {
 		return err
 	}
 
-	gassetId := util.GenerateRandomString(8, getRandIntn)
+	gassetId := util.GenerateRandomString(op.gassetIdLength, op.randIntn)
 	op.config.GassetId = gassetId
 	return util.UpdateGassetId(op.workingDirectory, gassetId)
 }
@@ -189,7 +207,6 @@ func (op *initOptions) ensureEmpty(ctx context.Context, storage blob.Storage) er
 	err := storage.ListBlobs(ctx, "", func(cb blob.Metadata) error {
 		return hasDataError
 	})
-
 	if err == nil {
 		return nil
 	}
@@ -203,8 +220,4 @@ func (op *initOptions) ensureEmpty(ctx context.Context, storage blob.Storage) er
 
 func (op *initOptions) createPolicy() {
 
-}
-
-func getRandIntn(n int) int {
-	return rand.Intn(n)
 }

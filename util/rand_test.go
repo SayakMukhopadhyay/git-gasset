@@ -21,10 +21,6 @@ import (
 	"testing"
 )
 
-func getRandIntn(_ int) int {
-	return 0
-}
-
 func TestGenerateRandomString(t *testing.T) {
 	type args struct {
 		n        int
@@ -37,7 +33,9 @@ func TestGenerateRandomString(t *testing.T) {
 	}{
 		{
 			name: "Generate a random string of length 10",
-			args: args{n: 10, randFunc: getRandIntn},
+			args: args{n: 10, randFunc: func(_ int) int {
+				return 0
+			}},
 			want: "0000000000",
 		},
 	}

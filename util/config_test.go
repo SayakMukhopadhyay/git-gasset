@@ -29,6 +29,17 @@ import (
 	"testing"
 )
 
+func handleAbsolutePath(wd string, path string) string {
+	if !strings.HasPrefix(path, ".") {
+		return path
+	}
+	return filepath.Join(wd, path)
+}
+
+func deleteFile(path string) error {
+	return os.Remove(path)
+}
+
 type ConfigSuite struct {
 	suite.Suite
 	workingDirectory string
@@ -295,15 +306,4 @@ func (suite *ConfigSuite) TestGetGitWorkingDirectory() {
 			assert.Equalf(suite.T(), wantPath, got, "GetGitWorkingDirectory(%v)", path)
 		})
 	}
-}
-
-func handleAbsolutePath(wd string, path string) string {
-	if !strings.HasPrefix(path, ".") {
-		return path
-	}
-	return filepath.Join(wd, path)
-}
-
-func deleteFile(path string) error {
-	return os.Remove(path)
 }
