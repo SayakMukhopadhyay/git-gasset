@@ -24,6 +24,7 @@ import (
 	"github.com/kopia/kopia/repo"
 	"github.com/kopia/kopia/repo/blob"
 	"github.com/kopia/kopia/repo/blob/s3"
+	"github.com/kopia/kopia/repo/blob/throttling"
 	"github.com/kopia/kopia/repo/content"
 	"github.com/spf13/cobra"
 	"log"
@@ -62,6 +63,7 @@ type initOptions struct {
 	config           *util.Config
 	kopiaConfig      *repo.LocalConfig
 	password         string
+	storage          blob.Storage
 	gassetIdLength   int
 	osGetwd          func() (string, error)
 	osTempDir        func() string
@@ -90,7 +92,7 @@ func InitRun(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if err := initOptions.loadKopiaConfig(); err != nil {
+	if err := initOptions.reloadKopiaConfig(); err != nil {
 		return err
 	}
 
@@ -120,7 +122,9 @@ func (op *initOptions) initWorkingDirectory() error {
 	return nil
 }
 
-func (op *initOptions) loadKopiaConfig() error {
+// This function saves the "kopia" section of the .gasset file and reloads it using kopia APIs.
+// This ensures that the kopia config conforms to the structure required.
+func (op *initOptions) reloadKopiaConfig() error {
 	config, err := util.GetConfig(op.workingDirectory)
 	if err != nil {
 		return err
@@ -157,26 +161,15 @@ func (op *initOptions) connect(create bool) error {
 	if err != nil {
 		return err
 	}
-
-	userDir, err := op.osUserConfigDir()
-	if err != nil {
-		return err
-	}
+	op.storage = storage
 
 	if create {
-		err := op.createRepo(ctx, storage)
-		if err != nil {
+		if err := op.createRepo(ctx); err != nil {
 			return err
 		}
 	}
 
-	configPath := filepath.Join(userDir, "git-gasset", "kopia-"+op.config.GassetId+".config")
-
-	err = op.repoConnect(ctx, configPath, storage, op.password, &repo.ConnectOptions{
-		ClientOptions:  op.kopiaConfig.ClientOptions,
-		CachingOptions: content.CachingOptions{},
-	})
-	if err != nil {
+	if err := op.connectRepo(ctx); err != nil {
 		return err
 	}
 
@@ -186,18 +179,49 @@ func (op *initOptions) connect(create bool) error {
 	return nil
 }
 
-func (op *initOptions) createRepo(ctx context.Context, storage blob.Storage) error {
-	if err := op.ensureEmpty(ctx, storage); err != nil {
+func (op *initOptions) connectRepo(ctx context.Context) error {
+	kopiaUserConfigPath, err := op.getKopiaUserConfigPath()
+	if err != nil {
+		return err
+	}
+	return op.repoConnect(ctx, kopiaUserConfigPath, op.storage, op.password, &repo.ConnectOptions{
+		ClientOptions:  op.kopiaConfig.ClientOptions,
+		CachingOptions: content.CachingOptions{},
+	})
+}
+
+func (op *initOptions) createRepo(ctx context.Context) error {
+	if err := op.ensureEmpty(ctx, op.storage); err != nil {
 		return err
 	}
 
-	if err := op.repoInitialize(ctx, storage, nil, op.password); err != nil {
+	if err := op.repoInitialize(ctx, op.storage, nil, op.password); err != nil {
 		return err
 	}
 
-	gassetId := util.GenerateRandomString(op.gassetIdLength, op.randIntn)
-	op.config.GassetId = gassetId
-	return util.UpdateGassetId(op.workingDirectory, gassetId)
+	// Set a random id as gasset id once the repo is initialized
+	op.config.GassetId = util.GenerateRandomString(op.gassetIdLength, op.randIntn)
+
+	// Yep, calling the caller connect function but with the "create" flag set to false.
+	// After all, connect just tries to connect to the repo and will fail if it can't when the "create" flag is false.
+	// This ensures that this function is not called again and thus ensuring that an endless loop doesn't happen
+	if err := op.connect(false); err != nil {
+		return err
+	}
+
+	//op.initPolicy()
+	return util.UpdateGassetId(op.workingDirectory, op.config.GassetId)
+}
+
+func (op *initOptions) getKopiaUserConfigPath() (string, error) {
+	if op.config.GassetId == "" {
+		return "", errors.New("gasset id is empty")
+	}
+	userDir, err := op.osUserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(userDir, "git-gasset", "kopia-"+op.config.GassetId+".config"), nil
 }
 
 // mostly from github.com/kopia/kopia/cli.commandRepositoryCreate.ensureEmpty
@@ -218,6 +242,96 @@ func (op *initOptions) ensureEmpty(ctx context.Context, storage blob.Storage) er
 	return fmt.Errorf("error listing blobs: %w", err)
 }
 
-func (op *initOptions) createPolicy() {
+//func (op *initOptions) initPolicy(ctx context.Context) {
+//	repo, err := repo.Open(ctx)
+//}
 
+func (op *initOptions) Clone() *initOptions {
+	copyKopia := func(l *repo.LocalConfig) *repo.LocalConfig {
+		var apiServer *repo.APIServerInfo
+		var storage *blob.ConnectionInfo
+		var caching *content.CachingOptions
+		var clientOptions repo.ClientOptions
+
+		if l.APIServer != nil {
+			apiServer = &repo.APIServerInfo{
+				BaseURL:                             l.APIServer.BaseURL,
+				TrustedServerCertificateFingerprint: l.APIServer.TrustedServerCertificateFingerprint,
+				DisableGRPC:                         l.APIServer.DisableGRPC,
+			}
+		}
+
+		if l.Storage != nil {
+			storage = &blob.ConnectionInfo{
+				Type:   l.Storage.Type,
+				Config: l.Storage.Config,
+			}
+		}
+
+		if l.Caching != nil {
+			caching = &content.CachingOptions{
+				CacheDirectory:              l.Caching.CacheDirectory,
+				ContentCacheSizeBytes:       l.Caching.ContentCacheSizeBytes,
+				ContentCacheSizeLimitBytes:  l.Caching.ContentCacheSizeLimitBytes,
+				MetadataCacheSizeBytes:      l.Caching.MetadataCacheSizeBytes,
+				MetadataCacheSizeLimitBytes: l.Caching.MetadataCacheSizeLimitBytes,
+				MaxListCacheDuration:        l.Caching.MaxListCacheDuration,
+				MinMetadataSweepAge:         l.Caching.MinMetadataSweepAge,
+				MinContentSweepAge:          l.Caching.MinContentSweepAge,
+				MinIndexSweepAge:            l.Caching.MinIndexSweepAge,
+				HMACSecret:                  l.Caching.HMACSecret,
+			}
+		}
+
+		if l.ClientOptions != (repo.ClientOptions{}) {
+			var throttlingParam *throttling.Limits
+
+			if l.ClientOptions.Throttling != nil {
+				throttlingParam = &throttling.Limits{
+					ReadsPerSecond:         l.ClientOptions.Throttling.ReadsPerSecond,
+					WritesPerSecond:        l.ClientOptions.Throttling.WritesPerSecond,
+					ListsPerSecond:         l.ClientOptions.Throttling.ListsPerSecond,
+					UploadBytesPerSecond:   l.ClientOptions.Throttling.UploadBytesPerSecond,
+					DownloadBytesPerSecond: l.ClientOptions.Throttling.DownloadBytesPerSecond,
+					ConcurrentReads:        l.ClientOptions.Throttling.ConcurrentReads,
+					ConcurrentWrites:       l.ClientOptions.Throttling.ConcurrentWrites,
+				}
+			}
+
+			clientOptions = repo.ClientOptions{
+				Hostname:                l.ClientOptions.Hostname,
+				Username:                l.ClientOptions.Username,
+				ReadOnly:                l.ClientOptions.ReadOnly,
+				PermissiveCacheLoading:  l.ClientOptions.PermissiveCacheLoading,
+				Description:             l.ClientOptions.Description,
+				EnableActions:           l.ClientOptions.EnableActions,
+				FormatBlobCacheDuration: l.ClientOptions.FormatBlobCacheDuration,
+				Throttling:              throttlingParam,
+			}
+		}
+		return &repo.LocalConfig{
+			APIServer:     apiServer,
+			Storage:       storage,
+			Caching:       caching,
+			ClientOptions: clientOptions,
+		}
+	}
+	return &initOptions{
+		workingDirectory: op.workingDirectory,
+		config: &util.Config{
+			Kopia:    copyKopia(op.config.Kopia),
+			GassetId: op.config.GassetId,
+		},
+		kopiaConfig:     copyKopia(op.kopiaConfig),
+		password:        op.password,
+		storage:         op.storage,
+		gassetIdLength:  op.gassetIdLength,
+		osGetwd:         op.osGetwd,
+		osTempDir:       op.osTempDir,
+		osUserConfigDir: op.osUserConfigDir,
+		randIntn:        op.randIntn,
+		s3New:           op.s3New,
+		repoConnect:     op.repoConnect,
+		repoInitialize:  op.repoInitialize,
+	}
 }
