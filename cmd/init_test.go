@@ -23,6 +23,8 @@ import (
 	"github.com/kopia/kopia/repo"
 	"github.com/kopia/kopia/repo/blob"
 	"github.com/kopia/kopia/repo/blob/s3"
+	"github.com/kopia/kopia/snapshot"
+	"github.com/kopia/kopia/snapshot/policy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 	"os"
@@ -131,6 +133,15 @@ func (suite *InitSuite) SetupSuite() {
 			return nil
 		},
 		repoInitialize: func(ctx context.Context, st blob.Storage, opt *repo.NewRepositoryOptions, password string) error {
+			return nil
+		},
+		repoOpen: func(ctx context.Context, configFile string, password string, options *repo.Options) (rep repo.Repository, err error) {
+			return nil, nil
+		},
+		repoWriteSession: func(ctx context.Context, r repo.Repository, opt repo.WriteSessionOptions, cb func(ctx context.Context, w repo.RepositoryWriter) error) error {
+			return cb(ctx, nil)
+		},
+		policySetPolicy: func(ctx context.Context, r repo.RepositoryWriter, si snapshot.SourceInfo, pol *policy.Policy) error {
 			return nil
 		},
 	}
@@ -359,15 +370,30 @@ func (suite *InitSuite) Test_initOptions_ensureEmpty() {
 }
 
 func (suite *InitSuite) Test_initOptions_initPolicy() {
+	type args struct {
+		ctx context.Context
+	}
 	tests := []struct {
-		name   string
-		fields initOptions
+		name    string
+		fields  initOptions
+		args    args
+		wantErr assert.ErrorAssertionFunc
 	}{
-		// TODO: Add test cases.
+		{
+			name:   "Check if no error is thrown",
+			fields: *suite.initOptions,
+			args: args{
+				ctx: context.Background(),
+			},
+			wantErr: assert.NoError,
+		},
 	}
 	for _, tt := range tests {
 		suite.Run(tt.name, func() {
-			//tt.fields.initPolicy()
+			err := tt.fields.initPolicy(tt.args.ctx)
+			if !tt.wantErr(suite.T(), err, fmt.Sprintf("initPolicy(%v)", tt.args.ctx)) {
+				return
+			}
 		})
 	}
 }

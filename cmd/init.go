@@ -26,6 +26,8 @@ import (
 	"github.com/kopia/kopia/repo/blob/s3"
 	"github.com/kopia/kopia/repo/blob/throttling"
 	"github.com/kopia/kopia/repo/content"
+	"github.com/kopia/kopia/snapshot"
+	"github.com/kopia/kopia/snapshot/policy"
 	"github.com/spf13/cobra"
 	"log"
 	"math/rand"
@@ -72,20 +74,26 @@ type initOptions struct {
 	s3New            func(ctx context.Context, opt *s3.Options, createIfNotExist bool) (blob.Storage, error)
 	repoConnect      func(ctx context.Context, configFile string, st blob.Storage, password string, options *repo.ConnectOptions) error
 	repoInitialize   func(ctx context.Context, st blob.Storage, opt *repo.NewRepositoryOptions, password string) error
+	repoOpen         func(ctx context.Context, configFile string, password string, options *repo.Options) (rep repo.Repository, err error)
+	repoWriteSession func(ctx context.Context, r repo.Repository, opt repo.WriteSessionOptions, cb func(ctx context.Context, w repo.RepositoryWriter) error) error
+	policySetPolicy  func(ctx context.Context, r repo.RepositoryWriter, si snapshot.SourceInfo, pol *policy.Policy) error
 }
 
 func InitRun(cmd *cobra.Command, _ []string) error {
 	log.Println("init called")
 
 	initOptions := initOptions{
-		gassetIdLength:  8,
-		osGetwd:         os.Getwd,
-		osTempDir:       os.TempDir,
-		osUserConfigDir: os.UserConfigDir,
-		randIntn:        rand.Intn,
-		s3New:           s3.New,
-		repoConnect:     repo.Connect,
-		repoInitialize:  repo.Initialize,
+		gassetIdLength:   8,
+		osGetwd:          os.Getwd,
+		osTempDir:        os.TempDir,
+		osUserConfigDir:  os.UserConfigDir,
+		randIntn:         rand.Intn,
+		s3New:            s3.New,
+		repoConnect:      repo.Connect,
+		repoInitialize:   repo.Initialize,
+		repoOpen:         repo.Open,
+		repoWriteSession: repo.WriteSession,
+		policySetPolicy:  policy.SetPolicy,
 	}
 
 	if err := initOptions.initWorkingDirectory(); err != nil {
@@ -209,7 +217,10 @@ func (op *initOptions) createRepo(ctx context.Context) error {
 		return err
 	}
 
-	//op.initPolicy()
+	if err := op.initPolicy(ctx); err != nil {
+		return err
+	}
+
 	return util.UpdateGassetId(op.workingDirectory, op.config.GassetId)
 }
 
@@ -242,9 +253,46 @@ func (op *initOptions) ensureEmpty(ctx context.Context, storage blob.Storage) er
 	return fmt.Errorf("error listing blobs: %w", err)
 }
 
-//func (op *initOptions) initPolicy(ctx context.Context) {
-//	repo, err := repo.Open(ctx)
-//}
+func (op *initOptions) initPolicy(ctx context.Context) error {
+	kopiaUserConfigPath, err := op.getKopiaUserConfigPath()
+	if err != nil {
+		return err
+	}
+	rep, err := op.repoOpen(ctx, kopiaUserConfigPath, op.password, &repo.Options{})
+	if err != nil {
+		return err
+	}
+	defer rep.Close(ctx)
+	return op.repoWriteSession(ctx, rep, repo.WriteSessionOptions{
+		Purpose: "Initialize repository with default policy",
+	}, func(ctx context.Context, writer repo.RepositoryWriter) error {
+		// Not needed once https://github.com/kopia/kopia/issues/3556 is closed and released
+		newOptionalInt := func(b policy.OptionalInt) *policy.OptionalInt {
+			return &b
+		}
+
+		defaultPolicy := &policy.Policy{
+			RetentionPolicy: policy.RetentionPolicy{
+				KeepLatest:               newOptionalInt(0),
+				KeepHourly:               newOptionalInt(0),
+				KeepDaily:                newOptionalInt(0),
+				KeepWeekly:               newOptionalInt(0),
+				KeepMonthly:              newOptionalInt(0),
+				KeepAnnual:               newOptionalInt(0),
+				IgnoreIdenticalSnapshots: policy.NewOptionalBool(false),
+			},
+			FilesPolicy:         policy.DefaultPolicy.FilesPolicy,
+			ErrorHandlingPolicy: policy.DefaultPolicy.ErrorHandlingPolicy,
+			SchedulingPolicy:    policy.DefaultPolicy.SchedulingPolicy,
+			CompressionPolicy:   policy.DefaultPolicy.CompressionPolicy,
+			Actions:             policy.DefaultPolicy.Actions,
+			LoggingPolicy:       policy.DefaultPolicy.LoggingPolicy,
+			UploadPolicy:        policy.DefaultPolicy.UploadPolicy,
+		}
+
+		return op.policySetPolicy(ctx, writer, policy.GlobalPolicySourceInfo, defaultPolicy)
+	})
+}
 
 func (op *initOptions) Clone() *initOptions {
 	copyKopia := func(l *repo.LocalConfig) *repo.LocalConfig {
@@ -322,16 +370,19 @@ func (op *initOptions) Clone() *initOptions {
 			Kopia:    copyKopia(op.config.Kopia),
 			GassetId: op.config.GassetId,
 		},
-		kopiaConfig:     copyKopia(op.kopiaConfig),
-		password:        op.password,
-		storage:         op.storage,
-		gassetIdLength:  op.gassetIdLength,
-		osGetwd:         op.osGetwd,
-		osTempDir:       op.osTempDir,
-		osUserConfigDir: op.osUserConfigDir,
-		randIntn:        op.randIntn,
-		s3New:           op.s3New,
-		repoConnect:     op.repoConnect,
-		repoInitialize:  op.repoInitialize,
+		kopiaConfig:      copyKopia(op.kopiaConfig),
+		password:         op.password,
+		storage:          op.storage,
+		gassetIdLength:   op.gassetIdLength,
+		osGetwd:          op.osGetwd,
+		osTempDir:        op.osTempDir,
+		osUserConfigDir:  op.osUserConfigDir,
+		randIntn:         op.randIntn,
+		s3New:            op.s3New,
+		repoConnect:      op.repoConnect,
+		repoInitialize:   op.repoInitialize,
+		repoOpen:         op.repoOpen,
+		repoWriteSession: op.repoWriteSession,
+		policySetPolicy:  op.policySetPolicy,
 	}
 }
