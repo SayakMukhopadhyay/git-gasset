@@ -17,7 +17,14 @@ limitations under the License.
 package cmd
 
 import (
-	"fmt"
+	"context"
+	"git-gasset/util"
+	"github.com/kopia/kopia/repo"
+	"github.com/kopia/kopia/repo/blob/s3"
+	"github.com/kopia/kopia/snapshot/policy"
+	"log"
+	"math/rand"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -30,11 +37,7 @@ var snapCmd = &cobra.Command{
 
 It uses the locations key in the .gasset.yaml file to determine the 
 assets to be snapshotted.`,
-	Run: SnapRun,
-}
-
-func SnapRun(cmd *cobra.Command, args []string) {
-	fmt.Println("snap called")
+	RunE: SnapRun,
 }
 
 func init() {
@@ -49,4 +52,55 @@ func init() {
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
 	// snapCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+}
+
+func SnapRun(cmd *cobra.Command, args []string) error {
+	log.Println("snap called")
+
+	options := util.Options{
+		GassetIdLength:   8,
+		OsGetwd:          os.Getwd,
+		OsTempDir:        os.TempDir,
+		OsUserConfigDir:  os.UserConfigDir,
+		RandIntn:         rand.Intn,
+		S3New:            s3.New,
+		RepoConnect:      repo.Connect,
+		RepoInitialize:   repo.Initialize,
+		RepoOpen:         repo.Open,
+		RepoWriteSession: repo.WriteSession,
+		PolicySetPolicy:  policy.SetPolicy,
+	}
+
+	if err := options.InitWorkingDirectory(); err != nil {
+		return err
+	}
+
+	if err := options.ReloadKopiaConfig(); err != nil {
+		return err
+	}
+
+	return createSnapshot(&options)
+}
+
+func createSnapshot(op *util.Options) error {
+	ctx := context.Background()
+
+	kopiaUserConfigPath, err := op.GetKopiaUserConfigPath()
+	if err != nil {
+		return err
+	}
+
+	rep, err := op.RepoOpen(ctx, kopiaUserConfigPath, op.Password, &repo.Options{})
+	if err != nil {
+		return err
+	}
+	defer rep.Close(ctx)
+
+	return op.RepoWriteSession(ctx, rep, repo.WriteSessionOptions{
+		Purpose: "Create snapshot",
+	}, func(ctx context.Context, w repo.RepositoryWriter) error {
+
+
+		return nil
+	})
 }

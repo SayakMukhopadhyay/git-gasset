@@ -18,23 +18,11 @@ package util
 
 import (
 	"fmt"
-	"github.com/kopia/kopia/repo"
-	"github.com/kopia/kopia/repo/blob"
-	"github.com/kopia/kopia/repo/blob/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 )
-
-func handleAbsolutePath(wd string, path string) string {
-	if !strings.HasPrefix(path, ".") {
-		return path
-	}
-	return filepath.Join(wd, path)
-}
 
 func deleteFile(path string) error {
 	return os.Remove(path)
@@ -42,7 +30,7 @@ func deleteFile(path string) error {
 
 type ConfigSuite struct {
 	suite.Suite
-	workingDirectory string
+	op OptionsForTest
 }
 
 func TestConfigSuite(t *testing.T) {
@@ -50,11 +38,10 @@ func TestConfigSuite(t *testing.T) {
 }
 
 func (suite *ConfigSuite) SetupSuite() {
-	workingDirectory, err := os.Getwd()
+	err := SetupTestOptions(&suite.op)
 	if err != nil {
 		suite.T().FailNow()
 	}
-	suite.workingDirectory = workingDirectory
 }
 
 func (suite *ConfigSuite) TestGetConfig() {
@@ -72,37 +59,13 @@ func (suite *ConfigSuite) TestGetConfig() {
 			args: args{
 				path: "../mocks/",
 			},
-			want: &Config{
-				Kopia: &repo.LocalConfig{
-					APIServer: nil,
-					Storage: &blob.ConnectionInfo{
-						Type: "s3",
-						Config: &s3.Options{
-							BucketName:      "bucket-name",
-							Prefix:          "prefix/",
-							Endpoint:        "endpoint.digitaloceanspaces.com",
-							AccessKeyID:     "someaccesskey",
-							SecretAccessKey: "somesecret",
-							SessionToken:    "",
-						},
-					},
-					Caching: nil,
-					ClientOptions: repo.ClientOptions{
-						Hostname:                "host-pc",
-						Username:                "user",
-						Description:             "prefix",
-						EnableActions:           false,
-						FormatBlobCacheDuration: 900000000000,
-					},
-				},
-				GassetId: "oof",
-			},
+			want:    suite.op.OptionsWithHiddenSecrets.Config,
 			wantErr: assert.NoError,
 		},
 	}
 	for _, tt := range tests {
 		suite.Run(tt.name, func() {
-			path := handleAbsolutePath(suite.workingDirectory, tt.args.path)
+			path := HandleAbsolutePath(suite.op.TestWorkingDirectory, tt.args.path)
 			got, err := GetConfig(path)
 			if !tt.wantErr(suite.T(), err, fmt.Sprintf("GetConfig(%v)", path)) {
 				return
@@ -126,14 +89,14 @@ func (suite *ConfigSuite) TestUpdateGassetId() {
 			name: "Attempt to update a gasset id",
 			args: args{
 				path:     "../mocks/",
-				gassetId: "oof",
+				gassetId: suite.op.OptionsWithGassetId.Config.GassetId,
 			},
 			wantErr: assert.NoError,
 		},
 	}
 	for _, tt := range tests {
 		suite.Run(tt.name, func() {
-			path := handleAbsolutePath(suite.workingDirectory, tt.args.path)
+			path := HandleAbsolutePath(suite.op.TestWorkingDirectory, tt.args.path)
 			tt.wantErr(suite.T(), UpdateGassetId(path, tt.args.gassetId), fmt.Sprintf("UpdateGassetId(%v, %v)", path, tt.args.gassetId))
 		})
 	}
@@ -152,26 +115,15 @@ func (suite *ConfigSuite) TestUpdateConfig() {
 		{
 			name: "Attempt to update a config file",
 			args: args{
-				path: "../mocks/temp/.gasset",
-				config: &Config{
-					Kopia: &repo.LocalConfig{
-						APIServer: nil,
-						Storage: &blob.ConnectionInfo{
-							Type:   "s3",
-							Config: &s3.Options{},
-						},
-						Caching:       nil,
-						ClientOptions: repo.ClientOptions{},
-					},
-					GassetId: "oof",
-				},
+				path:   "../mocks/temp/.gasset",
+				config: suite.op.OptionsWithGassetId.Config,
 			},
 			wantErr: assert.NoError,
 		},
 	}
 	for _, tt := range tests {
 		suite.Run(tt.name, func() {
-			path := handleAbsolutePath(suite.workingDirectory, tt.args.path)
+			path := HandleAbsolutePath(suite.op.TestWorkingDirectory, tt.args.path)
 			tt.wantErr(suite.T(), UpdateConfig(path, tt.args.config), fmt.Sprintf("UpdateConfig(%v, %v)", tt.args.path, tt.args.config))
 			deleteFile(path)
 		})
@@ -191,26 +143,15 @@ func (suite *ConfigSuite) TestWriteTempKopiaConfig() {
 		{
 			name: "Attempt to write a temp kopia config file",
 			args: args{
-				path: "../mocks/temp/kopia.config",
-				config: &Config{
-					Kopia: &repo.LocalConfig{
-						APIServer: nil,
-						Storage: &blob.ConnectionInfo{
-							Type:   "s3",
-							Config: &s3.Options{},
-						},
-						Caching:       nil,
-						ClientOptions: repo.ClientOptions{},
-					},
-					GassetId: "oof",
-				},
+				path:   "../mocks/temp/kopia.config",
+				config: suite.op.OptionsWithGassetId.Config,
 			},
 			wantErr: assert.NoError,
 		},
 	}
 	for _, tt := range tests {
 		suite.Run(tt.name, func() {
-			path := handleAbsolutePath(suite.workingDirectory, tt.args.path)
+			path := HandleAbsolutePath(suite.op.TestWorkingDirectory, tt.args.path)
 			tt.wantErr(suite.T(), WriteTempKopiaConfig(path, tt.args.config), fmt.Sprintf("WriteTempKopiaConfig(%v, %v)", tt.args.path, tt.args.config))
 			deleteFile(path)
 		})
@@ -248,7 +189,7 @@ func (suite *ConfigSuite) TestLoadKopiaSecretsFromEnv() {
 	}
 	for _, tt := range tests {
 		suite.Run(tt.name, func() {
-			path := handleAbsolutePath(suite.workingDirectory, tt.args.path)
+			path := HandleAbsolutePath(suite.op.TestWorkingDirectory, tt.args.path)
 			got, got1, got2, err := LoadKopiaSecretsFromEnv(path)
 			if !tt.wantErr(suite.T(), err, fmt.Sprintf("LoadKopiaSecretsFromEnv(%v)", path)) {
 				return
@@ -297,8 +238,8 @@ func (suite *ConfigSuite) TestGetGitWorkingDirectory() {
 	}
 	for _, tt := range tests {
 		suite.Run(tt.name, func() {
-			path := handleAbsolutePath(suite.workingDirectory, tt.args.path)
-			wantPath := handleAbsolutePath(suite.workingDirectory, tt.want)
+			path := HandleAbsolutePath(suite.op.TestWorkingDirectory, tt.args.path)
+			wantPath := HandleAbsolutePath(suite.op.TestWorkingDirectory, tt.want)
 			got, err := GetGitWorkingDirectory(path)
 			if !tt.wantErr(suite.T(), err, fmt.Sprintf("GetGitWorkingDirectory(%v)", path)) {
 				return

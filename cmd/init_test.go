@@ -20,39 +20,15 @@ import (
 	"context"
 	"fmt"
 	"git-gasset/util"
-	"github.com/kopia/kopia/repo"
 	"github.com/kopia/kopia/repo/blob"
-	"github.com/kopia/kopia/repo/blob/s3"
-	"github.com/kopia/kopia/snapshot"
-	"github.com/kopia/kopia/snapshot/policy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 )
 
-func handleAbsolutePath(wd string, path string) string {
-	if !strings.HasPrefix(path, ".") {
-		return path
-	}
-	return filepath.Join(wd, path)
-}
-
-type stubStorage struct {
-	blob.Storage
-}
-
-func (s stubStorage) ListBlobs(context.Context, blob.ID, func(bm blob.Metadata) error) error {
-	return nil
-}
-
 type InitSuite struct {
 	suite.Suite
-	workingDirectory          string
-	initOptions               *initOptions
-	initOptionsWithNoGassetId *initOptions
+	*util.OptionsForTest
 }
 
 func TestInitSuite(t *testing.T) {
@@ -60,180 +36,41 @@ func TestInitSuite(t *testing.T) {
 }
 
 func (suite *InitSuite) SetupSuite() {
-	workingDirectory, err := os.Getwd()
-	if err != nil {
+	suite.OptionsForTest = &util.OptionsForTest{}
+	if err := util.SetupTestOptions(suite.OptionsForTest); err != nil {
 		suite.T().FailNow()
-	}
-	suite.workingDirectory = workingDirectory
-
-	suite.initOptions = &initOptions{
-		workingDirectory: handleAbsolutePath(suite.workingDirectory, "../mocks"),
-		config: &util.Config{
-			Kopia: &repo.LocalConfig{
-				Storage: &blob.ConnectionInfo{
-					Type: "s3",
-					Config: &s3.Options{
-						BucketName:      "bucket-name",
-						Prefix:          "prefix/",
-						Endpoint:        "endpoint.digitaloceanspaces.com",
-						AccessKeyID:     "accessid",
-						SecretAccessKey: "secret",
-						SessionToken:    "",
-					},
-				},
-				ClientOptions: repo.ClientOptions{
-					Hostname:                "host-pc",
-					Username:                "user",
-					Description:             "prefix",
-					EnableActions:           false,
-					FormatBlobCacheDuration: 900000000000,
-				},
-			},
-			GassetId: "0000000000",
-		},
-		kopiaConfig: &repo.LocalConfig{
-			Storage: &blob.ConnectionInfo{
-				Type: "s3",
-				Config: &s3.Options{
-					BucketName:      "bucket-name",
-					Prefix:          "prefix/",
-					Endpoint:        "endpoint.digitaloceanspaces.com",
-					AccessKeyID:     "accessid",
-					SecretAccessKey: "secret",
-					SessionToken:    "",
-				},
-			},
-			ClientOptions: repo.ClientOptions{
-				Hostname:                "host-pc",
-				Username:                "user",
-				Description:             "prefix",
-				EnableActions:           false,
-				FormatBlobCacheDuration: 900000000000,
-			},
-		},
-		password:       "password",
-		storage:        stubStorage{},
-		gassetIdLength: 10,
-		osGetwd: func() (string, error) {
-			return handleAbsolutePath(suite.workingDirectory, "."), nil
-		},
-		osTempDir: func() string {
-			return handleAbsolutePath(suite.workingDirectory, "../mocks/temp")
-		},
-		osUserConfigDir: func() (string, error) {
-			return handleAbsolutePath(suite.workingDirectory, "../mocks/user"), nil
-		},
-		randIntn: func(n int) int {
-			return 0
-		},
-		s3New: func(ctx context.Context, opt *s3.Options, create bool) (blob.Storage, error) {
-			return stubStorage{}, nil
-		},
-		repoConnect: func(ctx context.Context, configFile string, st blob.Storage, password string, options *repo.ConnectOptions) error {
-			return nil
-		},
-		repoInitialize: func(ctx context.Context, st blob.Storage, opt *repo.NewRepositoryOptions, password string) error {
-			return nil
-		},
-		repoOpen: func(ctx context.Context, configFile string, password string, options *repo.Options) (rep repo.Repository, err error) {
-			return nil, nil
-		},
-		repoWriteSession: func(ctx context.Context, r repo.Repository, opt repo.WriteSessionOptions, cb func(ctx context.Context, w repo.RepositoryWriter) error) error {
-			return cb(ctx, nil)
-		},
-		policySetPolicy: func(ctx context.Context, r repo.RepositoryWriter, si snapshot.SourceInfo, pol *policy.Policy) error {
-			return nil
-		},
-	}
-
-	suite.initOptionsWithNoGassetId = suite.initOptions.Clone()
-	suite.initOptionsWithNoGassetId.config.GassetId = ""
-}
-
-func (suite *InitSuite) Test_initOptions_initWorkingDirectory() {
-	tests := []struct {
-		name    string
-		fields  initOptions
-		want    string
-		wantErr assert.ErrorAssertionFunc
-	}{
-		{
-			name:    "Attempt initialising working directory",
-			fields:  *suite.initOptions,
-			want:    handleAbsolutePath(suite.workingDirectory, "../"),
-			wantErr: assert.NoError,
-		},
-	}
-	for _, tt := range tests {
-		suite.Run(tt.name, func() {
-			err := tt.fields.initWorkingDirectory()
-			if !tt.wantErr(suite.T(), err, fmt.Sprintf("initWorkingDirectory()")) {
-				return
-			}
-			assert.Equalf(suite.T(), tt.want, tt.fields.workingDirectory, fmt.Sprintf("initWorkingDirectory()"))
-		})
-	}
-}
-
-func (suite *InitSuite) Test_initOptions_reloadKopiaConfig() {
-	tests := []struct {
-		name    string
-		fields  initOptions
-		want    initOptions
-		wantErr assert.ErrorAssertionFunc
-	}{
-		{
-			name:    "Attempt loading the kopia config from temp file",
-			fields:  *suite.initOptions,
-			want:    *suite.initOptions,
-			wantErr: assert.NoError,
-		},
-	}
-	for _, tt := range tests {
-		suite.Run(tt.name, func() {
-			err := tt.fields.reloadKopiaConfig()
-			if !tt.wantErr(suite.T(), err, fmt.Sprintf("reloadKopiaConfig()")) {
-				return
-			}
-			assert.Equalf(suite.T(), tt.want.kopiaConfig, tt.fields.kopiaConfig, fmt.Sprintf("initWorkingDirectory()"))
-			assert.Equalf(suite.T(), tt.want.config, tt.fields.config, fmt.Sprintf("initWorkingDirectory()"))
-			assert.Equalf(suite.T(), tt.want.password, tt.fields.password, fmt.Sprintf("initWorkingDirectory()"))
-		})
 	}
 }
 
 func (suite *InitSuite) Test_initOptions_connect() {
 	type args struct {
-		create bool
+		options *util.Options
+		create  bool
 	}
 	tests := []struct {
 		name    string
-		fields  initOptions
 		args    args
 		wantErr assert.ErrorAssertionFunc
 	}{
 		{
 			name:    "Connect to an existing S3 bucket",
-			fields:  *suite.initOptions,
-			args:    args{create: false},
+			args:    args{options: suite.OptionsWithGassetId, create: false},
 			wantErr: assert.NoError,
 		},
 		{
 			name:    "Connect to an existing S3 bucket with no gasset id registered",
-			fields:  *suite.initOptionsWithNoGassetId,
-			args:    args{create: false},
+			args:    args{options: suite.OptionsWithNoGassetId, create: false},
 			wantErr: assert.Error,
 		},
 		{
 			name:    "Create S3 bucket",
-			fields:  *suite.initOptions,
-			args:    args{create: true},
+			args:    args{options: suite.OptionsWithGassetId, create: true},
 			wantErr: assert.NoError,
 		},
 	}
 	for _, tt := range tests {
 		suite.Run(tt.name, func() {
-			err := tt.fields.connect(tt.args.create)
+			err := connect(tt.args.options, tt.args.create)
 			if !tt.wantErr(suite.T(), err, fmt.Sprintf("connect(%v)", tt.args.create)) {
 				return
 			}
@@ -243,34 +80,34 @@ func (suite *InitSuite) Test_initOptions_connect() {
 
 func (suite *InitSuite) Test_initOptions_connectRepo() {
 	type args struct {
-		ctx context.Context
+		ctx     context.Context
+		options *util.Options
 	}
 	tests := []struct {
 		name    string
-		fields  initOptions
 		args    args
 		wantErr assert.ErrorAssertionFunc
 	}{
 		{
-			name:   "Connect to an S3 repository",
-			fields: *suite.initOptions,
+			name: "Connect to an S3 repository",
 			args: args{
-				ctx: context.Background(),
+				ctx:     context.Background(),
+				options: suite.OptionsWithGassetId,
 			},
 			wantErr: assert.NoError,
 		},
 		{
-			name:   "Fail to connect to a repository without a gasset id",
-			fields: *suite.initOptionsWithNoGassetId,
+			name: "Fail to connect to a repository without a gasset id",
 			args: args{
-				ctx: context.Background(),
+				ctx:     context.Background(),
+				options: suite.OptionsWithNoGassetId,
 			},
 			wantErr: assert.Error,
 		},
 	}
 	for _, tt := range tests {
 		suite.Run(tt.name, func() {
-			err := tt.fields.connectRepo(tt.args.ctx)
+			err := connectRepo(tt.args.ctx, tt.args.options)
 			tt.wantErr(suite.T(), err, fmt.Sprintf("connectRepo(%v)", tt.args.ctx))
 		})
 	}
@@ -279,61 +116,28 @@ func (suite *InitSuite) Test_initOptions_connectRepo() {
 func (suite *InitSuite) Test_initOptions_createRepo() {
 	type args struct {
 		ctx     context.Context
-		storage blob.Storage
+		options *util.Options
 	}
 	tests := []struct {
 		name    string
-		fields  initOptions
 		args    args
 		wantErr assert.ErrorAssertionFunc
 	}{
 		{
-			name:   "Create an S3 repository",
-			fields: *suite.initOptions,
+			name: "Create an S3 repository",
 			args: args{
 				ctx:     context.Background(),
-				storage: stubStorage{},
+				options: suite.OptionsWithGassetId,
 			},
 			wantErr: assert.NoError,
 		},
 	}
 	for _, tt := range tests {
 		suite.Run(tt.name, func() {
-			err := tt.fields.createRepo(tt.args.ctx)
+			err := createRepo(tt.args.ctx, tt.args.options)
 			if !tt.wantErr(suite.T(), err, fmt.Sprintf("createRepo(%v)", tt.args.ctx)) {
 				return
 			}
-		})
-	}
-}
-
-func (suite *InitSuite) Test_initOptions_getKopiaUserConfigPath() {
-	tests := []struct {
-		name    string
-		fields  initOptions
-		want    string
-		wantErr assert.ErrorAssertionFunc
-	}{
-		{
-			name:    "Attempt to get the kopia user config path",
-			fields:  *suite.initOptions,
-			want:    handleAbsolutePath(suite.workingDirectory, "../mocks/user/git-gasset/kopia-0000000000.config"),
-			wantErr: assert.NoError,
-		},
-		{
-			name:    "Should throw error on empty gasset id",
-			fields:  *suite.initOptionsWithNoGassetId,
-			want:    "",
-			wantErr: assert.Error,
-		},
-	}
-	for _, tt := range tests {
-		suite.Run(tt.name, func() {
-			got, err := tt.fields.getKopiaUserConfigPath()
-			if !tt.wantErr(suite.T(), err, fmt.Sprintf("getKopiaUserConfigPath()")) {
-				return
-			}
-			assert.Equalf(suite.T(), tt.want, got, "getKopiaUserConfigPath()")
 		})
 	}
 }
@@ -345,23 +149,21 @@ func (suite *InitSuite) Test_initOptions_ensureEmpty() {
 	}
 	tests := []struct {
 		name    string
-		fields  initOptions
 		args    args
 		wantErr assert.ErrorAssertionFunc
 	}{
 		{
-			name:   "Check if no error is thrown",
-			fields: *suite.initOptions,
+			name: "Check if no error is thrown",
 			args: args{
 				ctx:     context.Background(),
-				storage: stubStorage{},
+				storage: util.StubStorage{},
 			},
 			wantErr: assert.NoError,
 		},
 	}
 	for _, tt := range tests {
 		suite.Run(tt.name, func() {
-			err := tt.fields.ensureEmpty(tt.args.ctx, tt.args.storage)
+			err := ensureEmpty(tt.args.ctx, tt.args.storage)
 			if !tt.wantErr(suite.T(), err, fmt.Sprintf("ensureEmpty(%v, %v)", tt.args.ctx, tt.args.storage)) {
 				return
 			}
@@ -371,26 +173,26 @@ func (suite *InitSuite) Test_initOptions_ensureEmpty() {
 
 func (suite *InitSuite) Test_initOptions_initPolicy() {
 	type args struct {
-		ctx context.Context
+		ctx     context.Context
+		options *util.Options
 	}
 	tests := []struct {
 		name    string
-		fields  initOptions
 		args    args
 		wantErr assert.ErrorAssertionFunc
 	}{
 		{
-			name:   "Check if no error is thrown",
-			fields: *suite.initOptions,
+			name: "Check if no error is thrown",
 			args: args{
-				ctx: context.Background(),
+				ctx:     context.Background(),
+				options: suite.OptionsWithGassetId,
 			},
 			wantErr: assert.NoError,
 		},
 	}
 	for _, tt := range tests {
 		suite.Run(tt.name, func() {
-			err := tt.fields.initPolicy(tt.args.ctx)
+			err := initPolicy(tt.args.ctx, tt.args.options)
 			if !tt.wantErr(suite.T(), err, fmt.Sprintf("initPolicy(%v)", tt.args.ctx)) {
 				return
 			}
