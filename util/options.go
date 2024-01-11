@@ -32,7 +32,6 @@ import (
 type Options struct {
 	WorkingDirectory string
 	Config           *Config
-	KopiaConfig      *repo.LocalConfig
 	Password         string
 	Storage          blob.Storage
 	GassetIdLength   int
@@ -79,7 +78,6 @@ func (op *Options) ReloadKopiaConfig() error {
 	if err != nil {
 		return err
 	}
-	op.KopiaConfig = kopiaConfig
 	op.Config.Kopia = kopiaConfig
 
 	accessKey, secretKey, password, err := LoadKopiaSecretsFromEnv(op.WorkingDirectory)
@@ -112,6 +110,8 @@ func (op *Options) Clone() *Options {
 		var caching *content.CachingOptions
 		var clientOptions repo.ClientOptions
 
+		castConfig := l.Storage.Config.(*s3.Options)
+
 		if l.APIServer != nil {
 			apiServer = &repo.APIServerInfo{
 				BaseURL:                             l.APIServer.BaseURL,
@@ -122,8 +122,29 @@ func (op *Options) Clone() *Options {
 
 		if l.Storage != nil {
 			storage = &blob.ConnectionInfo{
-				Type:   l.Storage.Type,
-				Config: l.Storage.Config,
+				Type: l.Storage.Type,
+				Config: &s3.Options{
+					BucketName:      castConfig.BucketName,
+					Prefix:          castConfig.Prefix,
+					Endpoint:        castConfig.Endpoint,
+					DoNotUseTLS:     castConfig.DoNotUseTLS,
+					DoNotVerifyTLS:  castConfig.DoNotVerifyTLS,
+					RootCA:          castConfig.RootCA,
+					AccessKeyID:     castConfig.AccessKeyID,
+					SecretAccessKey: castConfig.SecretAccessKey,
+					SessionToken:    castConfig.SessionToken,
+					Region:          castConfig.Region,
+					Limits: throttling.Limits{
+						ReadsPerSecond:         castConfig.Limits.ReadsPerSecond,
+						WritesPerSecond:        castConfig.Limits.WritesPerSecond,
+						ListsPerSecond:         castConfig.Limits.ListsPerSecond,
+						UploadBytesPerSecond:   castConfig.Limits.UploadBytesPerSecond,
+						DownloadBytesPerSecond: castConfig.Limits.DownloadBytesPerSecond,
+						ConcurrentReads:        castConfig.Limits.ConcurrentReads,
+						ConcurrentWrites:       castConfig.Limits.ConcurrentWrites,
+					},
+					PointInTime: castConfig.PointInTime,
+				},
 			}
 		}
 
@@ -181,7 +202,6 @@ func (op *Options) Clone() *Options {
 			Kopia:    copyKopia(op.Config.Kopia),
 			GassetId: op.Config.GassetId,
 		},
-		KopiaConfig:      copyKopia(op.KopiaConfig),
 		Password:         op.Password,
 		Storage:          op.Storage,
 		GassetIdLength:   op.GassetIdLength,

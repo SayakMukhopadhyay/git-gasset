@@ -84,7 +84,6 @@ func (suite *OptionsSuite) TestReloadKopiaConfig() {
 			if !tt.wantErr(suite.T(), err, fmt.Sprintf("reloadKopiaConfig()")) {
 				return
 			}
-			assert.Equalf(suite.T(), tt.want.KopiaConfig, tt.fields.KopiaConfig, fmt.Sprintf("initWorkingDirectory()"))
 			assert.Equalf(suite.T(), tt.want.Config, tt.fields.Config, fmt.Sprintf("initWorkingDirectory()"))
 			assert.Equalf(suite.T(), tt.want.Password, tt.fields.Password, fmt.Sprintf("initWorkingDirectory()"))
 		})

@@ -82,26 +82,6 @@ func SetupTestOptions(options *OptionsForTest) error {
 			},
 			GassetId: "0000000000",
 		},
-		KopiaConfig: &repo.LocalConfig{
-			Storage: &blob.ConnectionInfo{
-				Type: "s3",
-				Config: &s3.Options{
-					BucketName:      "bucket-name",
-					Prefix:          "prefix/",
-					Endpoint:        "endpoint.digitaloceanspaces.com",
-					AccessKeyID:     "accessid",
-					SecretAccessKey: "secret",
-					SessionToken:    "",
-				},
-			},
-			ClientOptions: repo.ClientOptions{
-				Hostname:                "host-pc",
-				Username:                "user",
-				Description:             "prefix",
-				EnableActions:           false,
-				FormatBlobCacheDuration: 900000000000,
-			},
-		},
 		Password:       "password",
 		Storage:        StubStorage{},
 		GassetIdLength: 10,
@@ -143,9 +123,6 @@ func SetupTestOptions(options *OptionsForTest) error {
 	options.OptionsWithHiddenSecrets = options.OptionsWithGassetId.Clone()
 	options.OptionsWithHiddenSecrets.Config.Kopia.Storage.Config.(*s3.Options).AccessKeyID = "someaccesskey"
 	options.OptionsWithHiddenSecrets.Config.Kopia.Storage.Config.(*s3.Options).SecretAccessKey = "somesecret"
-
-	options.OptionsWithHiddenSecrets.KopiaConfig.Storage.Config.(*s3.Options).AccessKeyID = "someaccesskey"
-	options.OptionsWithHiddenSecrets.KopiaConfig.Storage.Config.(*s3.Options).AccessKeyID = "somesecret"
 
 	return nil
 }

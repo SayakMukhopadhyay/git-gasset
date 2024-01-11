@@ -93,7 +93,7 @@ func InitRun(cmd *cobra.Command, _ []string) error {
 func connect(op *util.Options, create bool) error {
 	ctx := context.Background()
 
-	storage, err := op.S3New(ctx, op.KopiaConfig.Storage.Config.(*s3.Options), false)
+	storage, err := op.S3New(ctx, op.Config.Kopia.Storage.Config.(*s3.Options), false)
 	if err != nil {
 		return err
 	}
@@ -117,7 +117,7 @@ func connectRepo(ctx context.Context, op *util.Options) error {
 		return err
 	}
 	return op.RepoConnect(ctx, kopiaUserConfigPath, op.Storage, op.Password, &repo.ConnectOptions{
-		ClientOptions:  op.KopiaConfig.ClientOptions,
+		ClientOptions:  op.Config.Kopia.ClientOptions,
 		CachingOptions: content.CachingOptions{},
 	})
 }
