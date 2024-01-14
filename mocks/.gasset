@@ -17,5 +17,6 @@
     "enableActions": false,
     "formatBlobCacheDuration": 900000000000
   },
-  "gassetId": "0000000000"
+  "gassetId": "0000000000",
+  "dirs": ["./assets"]
 }

@@ -19,14 +19,18 @@ package cmd
 import (
 	"context"
 	"git-gasset/util"
+	"github.com/kopia/kopia/fs"
+	"github.com/kopia/kopia/fs/localfs"
 	"github.com/kopia/kopia/repo"
 	"github.com/kopia/kopia/repo/blob/s3"
+	"github.com/kopia/kopia/snapshot"
 	"github.com/kopia/kopia/snapshot/policy"
+	"github.com/kopia/kopia/snapshot/snapshotfs"
+	"github.com/spf13/cobra"
 	"log"
 	"math/rand"
 	"os"
-
-	"github.com/spf13/cobra"
+	"path/filepath"
 )
 
 // snapCmd represents the snap command
@@ -98,9 +102,101 @@ func createSnapshot(op *util.Options) error {
 
 	return op.RepoWriteSession(ctx, rep, repo.WriteSessionOptions{
 		Purpose: "Create snapshot",
-	}, func(ctx context.Context, w repo.RepositoryWriter) error {
+	}, func(ctx context.Context, writer repo.RepositoryWriter) error {
+		uploader := snapshotfs.NewUploader(writer)
+		uploader.MaxUploadBytes = 0 << 20 // 2^20 or 1 MiB
 
+		for _, dirPath := range op.Config.Dirs {
+			fsEntry, err := localfs.NewEntry(dirPath)
+			if err != nil {
+				return err
+			}
+			info := snapshot.SourceInfo{
+				Host:     rep.ClientOptions().Hostname,
+				UserName: rep.ClientOptions().Username,
+				Path:     filepath.Join(op.WorkingDirectory, dirPath),
+			}
 
+			if err := snapshotSingleSource(ctx, fsEntry, writer, uploader, info); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
+}
+
+// mostly from github.com/kopia/kopia/cli.commandSnapshotCreate.snapshotSingleSource
+func snapshotSingleSource(ctx context.Context, fsEntry fs.Entry, rep repo.RepositoryWriter, uploader *snapshotfs.Uploader, sourceInfo snapshot.SourceInfo) error {
+	previousManifests, err := findPreviousSnapshotManifest(ctx, rep, sourceInfo)
+	if err != nil {
+		return err
+	}
+
+	policyTree, err := policy.TreeForSource(ctx, rep, sourceInfo)
+	if err != nil {
+		return err
+	}
+
+	manifest, err := uploader.Upload(ctx, fsEntry, policyTree, sourceInfo, previousManifests...)
+	if err != nil {
+		return err
+	}
+
+	//Todo: Add a description to the manifest
+	manifest.Description = ""
+	manifest.Tags = nil
+
+	// Update pinning not required
+	// startTimeOverride and endTimeOverride not required
+
+	ignoreIdenticalSnapshot := policyTree.EffectivePolicy().RetentionPolicy.IgnoreIdenticalSnapshots.OrDefault(false)
+	if ignoreIdenticalSnapshot && len(previousManifests) > 0 {
+		if previousManifests[0].RootObjectID() == manifest.RootObjectID() {
+			log.Println("Not saving snapshot because no files have been changed since previous snapshot")
+			return nil
+		}
+	}
+
+	if _, err = snapshot.SaveSnapshot(ctx, rep, manifest); err != nil {
+		return err
+	}
+
+	if _, err = policy.ApplyRetentionPolicy(ctx, rep, sourceInfo, false); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// mostly from github.com/kopia/kopia/cli.findPreviousSnapshotManifest
+func findPreviousSnapshotManifest(ctx context.Context, rep repo.Repository, sourceInfo snapshot.SourceInfo) ([]*snapshot.Manifest, error) {
+	manifests, err := snapshot.ListSnapshots(ctx, rep, sourceInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	var previousComplete *snapshot.Manifest
+
+	var previousCompleteStartTime fs.UTCTimestamp
+
+	var result []*snapshot.Manifest
+
+	for _, manifest := range manifests {
+		if manifest.IncompleteReason == "" && (previousComplete == nil || manifest.StartTime.After(previousComplete.StartTime)) {
+			previousComplete = manifest
+			previousCompleteStartTime = manifest.StartTime
+		}
+	}
+
+	if previousComplete != nil {
+		result = append(result, previousComplete)
+	}
+
+	for _, manifest := range manifests {
+		if manifest.IncompleteReason != "" && manifest.StartTime.After(previousCompleteStartTime) {
+			result = append(result, manifest)
+		}
+	}
+
+	return result, nil
 }

@@ -28,6 +28,7 @@ import (
 type Config struct {
 	Kopia    *repo.LocalConfig `json:"kopia,omitempty"`
 	GassetId string            `json:"gassetId,omitempty"`
+	Dirs     []string          `json:"dirs"`
 }
 
 func GetConfig(path string) (*Config, error) {
